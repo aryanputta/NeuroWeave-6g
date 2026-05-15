@@ -26,6 +26,16 @@ def _write_report(path: Path, summary_rows: list[dict[str, object]]) -> None:
         grouped.setdefault(str(row["scenario"]), []).append(row)
 
     for scenario_name, rows in grouped.items():
+        ordered_rows = sorted(
+            rows,
+            key=lambda row: (
+                float(row["critical_slice_survival_rate"]),
+                float(row["overall_sla_rate"]),
+                -float(row["attack_leakage_rate"]),
+                -float(row["controller_p95_latency_ms"]),
+            ),
+            reverse=True,
+        )
         best = max(
             rows,
             key=lambda row: (
@@ -34,6 +44,9 @@ def _write_report(path: Path, summary_rows: list[dict[str, object]]) -> None:
                 -float(row["controller_p95_latency_ms"]),
             ),
         )
+        baselines = {str(row["policy"]): row for row in rows}
+        static_row = baselines.get("static_qos")
+        failure_aware_row = baselines.get("failure_aware")
         lines.extend(
             [
                 f"## {scenario_name}",
@@ -44,8 +57,41 @@ def _write_report(path: Path, summary_rows: list[dict[str, object]]) -> None:
                 f"- Attack leakage: `{best['attack_leakage_rate']}`",
                 f"- AI deadline miss rate: `{best['ai_deadline_miss_rate']}`",
                 "",
+                "| Policy | Critical Survival | Overall SLA | Controller p95 ms | AI Miss Rate | Attack Leakage | False Positive Isolation |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
             ]
         )
+        for row in ordered_rows:
+            lines.append(
+                "| "
+                + f"{row['policy']} | {row['critical_slice_survival_rate']} | {row['overall_sla_rate']} | "
+                + f"{row['controller_p95_latency_ms']} | {row['ai_deadline_miss_rate']} | "
+                + f"{row['attack_leakage_rate']} | {row['false_positive_isolation_rate']} |"
+            )
+        lines.append("")
+        if static_row is not None:
+            lines.append(
+                "- Winner delta vs `static_qos`: "
+                + f"critical survival `+{round(float(best['critical_slice_survival_rate']) - float(static_row['critical_slice_survival_rate']), 4)}`"
+                + ", "
+                + f"controller p95 `{round(float(best['controller_p95_latency_ms']) - float(static_row['controller_p95_latency_ms']), 4)}` ms"
+                + ", "
+                + f"AI miss `{round(float(best['ai_deadline_miss_rate']) - float(static_row['ai_deadline_miss_rate']), 4)}`"
+                + ", "
+                + f"attack leakage `{round(float(best['attack_leakage_rate']) - float(static_row['attack_leakage_rate']), 4)}`"
+            )
+        if failure_aware_row is not None and best["policy"] != "failure_aware":
+            lines.append(
+                "- Winner delta vs `failure_aware`: "
+                + f"critical survival `+{round(float(best['critical_slice_survival_rate']) - float(failure_aware_row['critical_slice_survival_rate']), 4)}`"
+                + ", "
+                + f"controller p95 `{round(float(best['controller_p95_latency_ms']) - float(failure_aware_row['controller_p95_latency_ms']), 4)}` ms"
+                + ", "
+                + f"AI miss `{round(float(best['ai_deadline_miss_rate']) - float(failure_aware_row['ai_deadline_miss_rate']), 4)}`"
+                + ", "
+                + f"attack leakage `{round(float(best['attack_leakage_rate']) - float(failure_aware_row['attack_leakage_rate']), 4)}`"
+            )
+        lines.append("")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -126,4 +172,3 @@ def run_benchmark_suite(
     _write_csv(outputs["slice_metrics"], slice_rows)
     _write_report(outputs["report"], summary_rows)
     return outputs
-

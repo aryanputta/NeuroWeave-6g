@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .aegis_mixer import build_aegis_mixer_decision
 from .types import CellDecision, CellDemand, ResourceBudget, SliceDecision, SliceDemand
 
 
@@ -14,7 +15,7 @@ class Policy:
 
 
 def available_policies() -> list[str]:
-    return ["static_qos", "throughput_first", "security_only", "failure_aware"]
+    return ["static_qos", "throughput_first", "security_only", "failure_aware", "aegis_mixer"]
 
 
 def build_policy(name: str) -> Policy:
@@ -23,6 +24,7 @@ def build_policy(name: str) -> Policy:
         "throughput_first": ThroughputFirstPolicy,
         "security_only": SecurityOnlyPolicy,
         "failure_aware": FailureAwarePolicy,
+        "aegis_mixer": AegisMixerPolicy,
     }
     if name not in mapping:
         raise ValueError(f"Unknown policy {name!r}. Available: {', '.join(available_policies())}")
@@ -251,4 +253,16 @@ class FailureAwarePolicy(Policy):
             inspection_actions=inspection_actions,
             controller_actions_used=controller_actions_used,
             note="Co-optimizes mission-critical continuity, attack isolation, and edge AI admission.",
+        )
+
+
+class AegisMixerPolicy(Policy):
+    def __init__(self) -> None:
+        super().__init__(name="aegis_mixer")
+
+    def decide(self, cell: CellDemand, budget: ResourceBudget, controller_queue: int) -> CellDecision:
+        return build_aegis_mixer_decision(
+            cell=cell,
+            budget=budget,
+            controller_queue=controller_queue,
         )

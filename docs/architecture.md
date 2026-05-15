@@ -20,6 +20,21 @@ Model the control-plane failure modes of an AI-native 6G network where radio sch
   - throttling
   - inspection
 
+### AegisMixer Decision Layer
+- generates multiple feasible interventions per slice instead of one fixed rule outcome
+- retrieves a shortlist of high-value actions using coarse urgency features
+- reranks that shortlist using richer context:
+  - mission-critical continuity value
+  - edge-AI deadline pressure
+  - anomaly and attack pressure
+  - controller action cost
+  - shared PRB and GPU budget pressure
+- selects actions in phases:
+  - suspicious isolation
+  - mission-critical protection
+  - edge-AI preservation
+  - remaining benign traffic
+
 ### Simulator
 - applies policy decisions to each cell
 - updates controller queue based on incoming events and actions spent
@@ -38,6 +53,18 @@ You want benchmark deltas that can be reproduced exactly.
 The networking papers support AI-native orchestration and attack-aware operation, but the real systems gap is when the controller itself becomes the bottleneck.
 That is why controller queue and controller p95 latency are first-class outputs.
 
+### Why retrieval plus ranking belongs here
+
+The control plane often has more possible interventions than it can evaluate deeply within one decision interval.
+That is structurally similar to large-scale recommendation:
+
+- too many candidates to score exhaustively
+- state evolves step to step
+- multiple objectives conflict
+- latency budget is strict
+
+`AegisMixer` tests whether a recommender-style control layer can improve action quality without collapsing controller timing.
+
 ### Why suspicious traffic is modeled as slices
 
 This keeps the simulator unified:
@@ -52,4 +79,4 @@ This keeps the simulator unified:
 - explicit NTN path simulation for satellite or aerial backhaul
 - reinforcement learning or intent-based policy optimization
 - admission cost model for model placement and offload latency
-
+- learned retrieval and reranking models instead of hand-tuned scoring formulas

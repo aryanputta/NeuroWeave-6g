@@ -34,6 +34,7 @@ This repo focuses on the harder failure mode:
 - `throughput_first`: high utilization, weak attack awareness
 - `security_only`: aggressive isolation without compute awareness
 - `failure_aware`: protects critical slices, isolates suspicious bursts, and degrades low-priority demand when the control plane is close to collapse
+- `aegis_mixer`: retrieval-then-ranking controller derived from `x-algorithm` style candidate generation and reranking, aimed at action prioritization under shared control budget
 
 ## Output Metrics
 
@@ -49,12 +50,23 @@ This repo focuses on the harder failure mode:
 
 From the committed benchmark run in `results/raw/summary_metrics.csv`:
 
+- In `ai_spike`, `aegis_mixer` improved overall SLA from `0.8056` to `0.9722` compared with `static_qos`.
+- In `ai_spike`, `aegis_mixer` reduced AI deadline misses from `0.3333` to `0.1389`.
 - In `encrypted_ddos`, `failure_aware` raised critical slice survival from `0.4259` to `0.6296` compared with `static_qos`.
 - In `encrypted_ddos`, `failure_aware` cut controller p95 latency from `60.816 ms` to `43.824 ms`.
 - In `encrypted_ddos`, `failure_aware` reduced attack leakage from `1.0` to `0.0`.
-- In `mixed_failure`, `failure_aware` raised critical slice survival from `0.2778` to `0.4074` compared with `static_qos`.
-- In `mixed_failure`, `failure_aware` cut controller queue peak from `2379` to `1785`.
-- In `mixed_failure`, `failure_aware` reduced AI deadline misses from `0.7593` to `0.5278`.
+- In `mixed_failure`, `aegis_mixer` improved overall SLA from `0.3926` to `0.5963` while also reducing attack leakage from `1.0` to `0.0`.
+- In `mixed_failure`, `failure_aware` still remains the survivability winner, raising critical slice survival from `0.2778` to `0.4074`.
+
+## AegisMixer Takeaway
+
+`aegis_mixer` is not a replacement for `failure_aware`.
+It exposes a different control objective:
+
+- `aegis_mixer` is best when the system needs to rank many feasible interventions quickly and preserve broader service quality during compute-heavy surges.
+- `failure_aware` is best when survivability of mission-critical slices under attack is the primary objective.
+
+That split is useful rather than embarrassing. It demonstrates that control-policy quality depends on the operating regime, which is exactly the systems point this project is trying to make.
 
 ## Repo Layout
 
@@ -70,7 +82,26 @@ From the committed benchmark run in `results/raw/summary_metrics.csv`:
 python3 -m pytest -q
 python3 -m src.main --mode benchmark --steps 18 --seed 7
 python3 -m src.main --mode simulate --scenario mixed_failure --policy failure_aware
+python3 -m src.main --mode demo --scenario ai_spike
 ```
+
+## Demo Flow
+
+Use the demo mode when you want a fast, interview-friendly walkthrough instead of raw CSV output.
+
+Recommended live demo commands:
+
+```bash
+python3 -m src.main --mode demo --scenario ai_spike
+python3 -m src.main --mode demo --scenario mixed_failure
+python3 -m src.main --mode demo --scenario encrypted_ddos
+```
+
+What each shows:
+
+- `ai_spike`: `aegis_mixer` as the ranking-first winner under edge compute surge
+- `mixed_failure`: broad SLA preservation versus survivability-first tradeoff
+- `encrypted_ddos`: why `failure_aware` still wins when attack-heavy continuity matters most
 
 ## Recruiter Angle
 
@@ -79,7 +110,17 @@ It is presented as:
 
 > I built a failure-aware AI-RAN control-plane benchmark that models how mission-critical slices, edge inference, and encrypted attack traffic compete for shared radio, compute, and controller budget, then measured which control policies keep the network alive under overload.
 
-That is a much stronger systems story for telecom, networking, distributed systems, and edge AI roles.
+With `aegis_mixer`, the story gets stronger:
+
+> I also derived a retrieval-plus-ranking controller from a production recommendation architecture and tested when that decision layer beats static telecom heuristics and when it still loses to a safety-first resilience policy.
+
+That is a stronger systems story for telecom, networking, distributed systems, edge AI, and infrastructure roles because it combines:
+
+- recommendation-system architecture transfer
+- control-plane benchmarking
+- explicit multi-objective tradeoff analysis
+- honest failure-case reporting
+- a runnable CLI demo that explains the winner by operating regime
 
 See also:
 
