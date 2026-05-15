@@ -1,5 +1,10 @@
 from neuroweave_6g.demo import build_demo_snapshot, render_demo_text
 from neuroweave_6g.benchmark import run_benchmark_suite
+from neuroweave_6g.learning import (
+    export_learning_traces,
+    simulate_learned_aegis_mixer_on_scenario,
+    train_linear_reward_model,
+)
 from neuroweave_6g.simulator import simulate_policy_on_scenario
 
 
@@ -41,6 +46,51 @@ def test_demo_text_includes_showcase_sections() -> None:
     assert "Interview takeaways" in demo_text
     assert "Showcase framing" in demo_text
     assert "--mode demo --scenario mixed_failure" in demo_text
+
+
+def test_learning_pipeline_exports_and_trains(tmp_path) -> None:
+    trace_path = export_learning_traces(
+        output_path=tmp_path / "candidate_traces.csv",
+        steps=4,
+        seeds=[7],
+        scenario_names=["ai_spike"],
+        source_policy_names=["static_qos", "failure_aware"],
+    )
+    model_path, metrics = train_linear_reward_model(
+        trace_path=trace_path,
+        model_output_path=tmp_path / "learned_model.json",
+        epochs=40,
+        learning_rate=0.04,
+    )
+
+    assert trace_path.exists()
+    assert model_path.exists()
+    assert metrics["row_count"] > 0
+
+
+def test_learned_policy_simulates_after_training(tmp_path) -> None:
+    trace_path = export_learning_traces(
+        output_path=tmp_path / "candidate_traces.csv",
+        steps=4,
+        seeds=[7],
+        scenario_names=["ai_spike"],
+        source_policy_names=["static_qos", "failure_aware"],
+    )
+    model_path, _ = train_linear_reward_model(
+        trace_path=trace_path,
+        model_output_path=tmp_path / "learned_model.json",
+        epochs=40,
+        learning_rate=0.04,
+    )
+    result = simulate_learned_aegis_mixer_on_scenario(
+        scenario_name="ai_spike",
+        model_path=model_path,
+        steps=4,
+        seed=7,
+    )
+
+    assert result.policy_name == "aegis_mixer_learned"
+    assert result.summary_metrics["critical_slice_survival_rate"] >= 0.9
 
 
 def test_benchmark_suite_writes_outputs(tmp_path) -> None:

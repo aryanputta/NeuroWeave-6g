@@ -4,6 +4,13 @@ Networking-first AI-RAN resilience benchmark for 6G edge systems.
 
 `NeuroWeave-6g` implements **AegisRAN**, a failure-aware AI-RAN control-plane simulator for a hard systems problem surfaced by the papers in your Brain: what happens when AI-native RAN control, edge inference demand, and encrypted attack traffic all compete for the same shared infrastructure.
 
+The repo now also includes a research-oriented next step beyond hand-tuned heuristics:
+
+- rollout trace export for candidate actions
+- counterfactual reward labeling from simulator outcomes
+- a learned linear reranker for `aegis_mixer`
+- learned-policy benchmarking against the fixed baselines
+
 ## Why This Project Exists
 
 Your local 6G paper set points to three converging realities:
@@ -35,6 +42,7 @@ This repo focuses on the harder failure mode:
 - `security_only`: aggressive isolation without compute awareness
 - `failure_aware`: protects critical slices, isolates suspicious bursts, and degrades low-priority demand when the control plane is close to collapse
 - `aegis_mixer`: retrieval-then-ranking controller derived from `x-algorithm` style candidate generation and reranking, aimed at action prioritization under shared control budget
+- `aegis_mixer_learned`: same candidate pipeline as `aegis_mixer`, but reranked by a learned reward model trained on exported simulator traces
 
 ## Output Metrics
 
@@ -83,6 +91,8 @@ python3 -m pytest -q
 python3 -m src.main --mode benchmark --steps 18 --seed 7
 python3 -m src.main --mode simulate --scenario mixed_failure --policy failure_aware
 python3 -m src.main --mode demo --scenario ai_spike
+python3 -m src.main --mode train_reranker --steps 8 --seed 7
+python3 -m src.main --mode benchmark_learned --steps 8 --seed 7
 ```
 
 ## Demo Flow
@@ -103,6 +113,33 @@ What each shows:
 - `mixed_failure`: broad SLA preservation versus survivability-first tradeoff
 - `encrypted_ddos`: why `failure_aware` still wins when attack-heavy continuity matters most
 
+## Learned Reranker Workflow
+
+This is the research-heavy path in the repo now.
+
+1. Export candidate traces with counterfactual rewards
+```bash
+python3 -m src.main --mode export_traces --steps 8 --seed 7
+```
+
+2. Train the reranker
+```bash
+python3 -m src.main --mode train_reranker --steps 8 --seed 7
+```
+
+3. Evaluate the learned controller
+```bash
+python3 -m src.main --mode simulate_learned --scenario ai_spike --steps 8 --seed 7
+python3 -m src.main --mode benchmark_learned --steps 8 --seed 7
+```
+
+What this buys you:
+
+- no longer just a hand-tuned scoring function
+- reproducible state-action-outcome traces
+- a real learning-based comparison against the fixed heuristics
+- a path toward ablations, regret analysis, and more paper-like results
+
 ## Recruiter Angle
 
 This is not presented as "I built a 6G dashboard."
@@ -113,6 +150,10 @@ It is presented as:
 With `aegis_mixer`, the story gets stronger:
 
 > I also derived a retrieval-plus-ranking controller from a production recommendation architecture and tested when that decision layer beats static telecom heuristics and when it still loses to a safety-first resilience policy.
+
+With the learned reranker, the story is stronger again:
+
+> I exported counterfactual action traces from the simulator, trained a reward model to rerank controller interventions, and compared the learned controller against fixed heuristics under compute-surge and attack-heavy regimes.
 
 That is a stronger systems story for telecom, networking, distributed systems, edge AI, and infrastructure roles because it combines:
 

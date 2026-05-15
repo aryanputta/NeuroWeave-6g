@@ -101,3 +101,28 @@ What this demonstrates:
 - `aegis_mixer` tells the algorithm-transfer story.
 - Together they make the project deeper than a standard scheduler benchmark.
 - the CLI demo gives you a direct showcase artifact for interviews, hackathons, and project videos
+
+## Research-Heavy Next Step Now Implemented
+
+The repo no longer stops at a hand-tuned ranker.
+It now supports:
+
+- candidate trace export
+- counterfactual reward labeling
+- learned reranker training
+- learned-policy simulation and benchmarking
+
+Core commands:
+
+```bash
+python3 -m src.main --mode export_traces --steps 8 --seed 7
+python3 -m src.main --mode train_reranker --steps 8 --seed 7
+python3 -m src.main --mode benchmark_learned --steps 8 --seed 7
+```
+
+This matters because it moves the project closer to a real systems-paper pattern:
+
+- define an action space
+- generate offline traces
+- learn a ranking model from counterfactual outcomes
+- compare learned and rule-based controllers by operating regime

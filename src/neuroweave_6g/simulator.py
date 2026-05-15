@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import math
 from statistics import mean
+from typing import Callable
 
 from .policies import build_policy
 from .scenario import build_scenario
-from .types import CellDemand, ResourceBudget, ScenarioResult, SliceObservation, StepSummary
+from .types import CellDecision, CellDemand, ResourceBudget, ScenarioResult, SliceObservation, StepSummary
+
+DecisionBuilder = Callable[[CellDemand, ResourceBudget, int], CellDecision]
 
 
 def _percentile(values: list[float], percentile: float) -> float:
@@ -20,7 +23,7 @@ def _safe_mean(values: list[float]) -> float:
     return mean(values) if values else 0.0
 
 
-def _evaluate_cell(
+def evaluate_cell_decisions(
     *,
     scenario_name: str,
     policy_name: str,
@@ -73,6 +76,32 @@ def _evaluate_cell(
     return observations
 
 
+def summarize_observations(observations: list[SliceObservation]) -> dict[str, float]:
+    critical_obs = [obs for obs in observations if obs.mission_critical]
+    ai_obs = [obs for obs in observations if obs.ai_enabled]
+    suspicious_obs = [obs for obs in observations if obs.suspicious]
+    isolated_benign = [obs for obs in observations if obs.isolated and not obs.suspicious]
+    return {
+        "critical_slice_survival_rate": round(sum(1 for obs in critical_obs if obs.sla_met) / max(1, len(critical_obs)), 4),
+        "overall_sla_rate": round(sum(1 for obs in observations if obs.sla_met) / max(1, len(observations)), 4),
+        "ai_deadline_miss_rate": round(sum(1 for obs in ai_obs if obs.deadline_missed) / max(1, len(ai_obs)), 4),
+        "attack_leakage_rate": round(
+            sum(1 for obs in suspicious_obs if (not obs.isolated and obs.service_ratio > 0.10)) / max(1, len(suspicious_obs)),
+            4,
+        ),
+        "false_positive_isolation_rate": round(len(isolated_benign) / max(1, len(observations) - len(suspicious_obs)), 4),
+        "mean_service_ratio": round(_safe_mean([obs.service_ratio for obs in observations]), 4),
+    }
+
+
+def project_controller_latency_ms(
+    *,
+    controller_queue: int,
+    net_incoming_events: int,
+) -> float:
+    return 2.8 + (controller_queue * 0.028) + (net_incoming_events * 0.012)
+
+
 def simulate_policy_on_scenario(
     *,
     scenario_name: str,
@@ -83,6 +112,28 @@ def simulate_policy_on_scenario(
 ) -> ScenarioResult:
     scenario = build_scenario(scenario_name, steps=steps, seed=seed)
     policy = build_policy(policy_name)
+    return simulate_decision_builder_on_scenario(
+        scenario_name=scenario_name,
+        policy_name=policy.name,
+        decision_builder=lambda cell, effective_budget, controller_queue: policy.decide(cell, effective_budget, controller_queue),
+        steps=steps,
+        seed=seed,
+        budget=budget,
+        scenario=scenario,
+    )
+
+
+def simulate_decision_builder_on_scenario(
+    *,
+    scenario_name: str,
+    policy_name: str,
+    decision_builder: DecisionBuilder,
+    steps: int = 18,
+    seed: int = 7,
+    budget: ResourceBudget | None = None,
+    scenario=None,
+) -> ScenarioResult:
+    effective_scenario = scenario or build_scenario(scenario_name, steps=steps, seed=seed)
     effective_budget = budget or ResourceBudget()
 
     controller_queue = 0
@@ -90,7 +141,7 @@ def simulate_policy_on_scenario(
     slice_observations: list[SliceObservation] = []
     controller_latencies: list[float] = []
 
-    for step in scenario.steps:
+    for step in effective_scenario.steps:
         total_incoming_events = sum(cell.control_events for cell in step.cells)
         cell_observations: list[SliceObservation] = []
         controller_actions_spent = 0
@@ -100,7 +151,7 @@ def simulate_policy_on_scenario(
 
         per_cell_decisions = []
         for cell in step.cells:
-            cell_decision = policy.decide(cell, effective_budget, controller_queue)
+            cell_decision = decision_builder(cell, effective_budget, controller_queue)
             controller_actions_spent += cell_decision.controller_actions_used
             per_cell_decisions.append((cell, cell_decision))
             for slice_demand in cell.slices:
@@ -116,14 +167,17 @@ def simulate_policy_on_scenario(
             effective_budget.controller_actions_per_step - max(0, controller_actions_spent - 48),
         )
         controller_queue = max(0, controller_queue + net_incoming_events - effective_controller_capacity)
-        controller_latency_ms = 2.8 + (controller_queue * 0.028) + (net_incoming_events * 0.012)
+        controller_latency_ms = project_controller_latency_ms(
+            controller_queue=controller_queue,
+            net_incoming_events=net_incoming_events,
+        )
         controller_latencies.append(controller_latency_ms)
 
         for cell, cell_decision in per_cell_decisions:
             decision_map = cell_decision.slice_decisions
-            observations = _evaluate_cell(
-                scenario_name=scenario.name,
-                policy_name=policy.name,
+            observations = evaluate_cell_decisions(
+                scenario_name=effective_scenario.name,
+                policy_name=policy_name,
                 step_idx=step.step_idx,
                 cell=cell,
                 controller_latency_ms=controller_latency_ms,
@@ -142,8 +196,8 @@ def simulate_policy_on_scenario(
         step_summaries.append(
             StepSummary(
                 step_idx=step.step_idx,
-                scenario_name=scenario.name,
-                policy_name=policy.name,
+                scenario_name=effective_scenario.name,
+                policy_name=policy_name,
                 controller_queue=controller_queue,
                 controller_latency_ms=round(controller_latency_ms, 4),
                 attack_leakage_rate=round(attack_leakage / max(1, suspicious_total), 4),
@@ -153,26 +207,18 @@ def simulate_policy_on_scenario(
             )
         )
 
-    critical_obs = [obs for obs in slice_observations if obs.mission_critical]
-    ai_obs = [obs for obs in slice_observations if obs.ai_enabled]
-    suspicious_obs = [obs for obs in slice_observations if obs.suspicious]
-    isolated_benign = [obs for obs in slice_observations if obs.isolated and not obs.suspicious]
-
-    summary_metrics = {
-        "critical_slice_survival_rate": round(sum(1 for obs in critical_obs if obs.sla_met) / max(1, len(critical_obs)), 4),
-        "overall_sla_rate": round(sum(1 for obs in slice_observations if obs.sla_met) / max(1, len(slice_observations)), 4),
-        "controller_p95_latency_ms": round(_percentile(controller_latencies, 95), 4),
-        "controller_queue_peak": float(max(summary.controller_queue for summary in step_summaries)),
-        "ai_deadline_miss_rate": round(sum(1 for obs in ai_obs if obs.deadline_missed) / max(1, len(ai_obs)), 4),
-        "attack_leakage_rate": round(sum(1 for obs in suspicious_obs if (not obs.isolated and obs.service_ratio > 0.10)) / max(1, len(suspicious_obs)), 4),
-        "false_positive_isolation_rate": round(len(isolated_benign) / max(1, len(slice_observations) - len(suspicious_obs)), 4),
-        "mean_service_ratio": round(_safe_mean([obs.service_ratio for obs in slice_observations]), 4),
-    }
+    summary_metrics = summarize_observations(slice_observations)
+    summary_metrics.update(
+        {
+            "controller_p95_latency_ms": round(_percentile(controller_latencies, 95), 4),
+            "controller_queue_peak": float(max(summary.controller_queue for summary in step_summaries)),
+        }
+    )
     return ScenarioResult(
-        scenario_name=scenario.name,
-        policy_name=policy.name,
-        description=scenario.description,
-        notes=scenario.notes,
+        scenario_name=effective_scenario.name,
+        policy_name=policy_name,
+        description=effective_scenario.description,
+        notes=effective_scenario.notes,
         step_summaries=step_summaries,
         slice_observations=slice_observations,
         summary_metrics=summary_metrics,
