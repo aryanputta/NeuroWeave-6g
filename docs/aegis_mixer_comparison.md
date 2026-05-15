@@ -109,20 +109,28 @@ It now supports:
 
 - candidate trace export
 - counterfactual reward labeling
-- learned reranker training
+- train/eval seed split
+- learned reranker training with linear and MLP options
 - learned-policy simulation and benchmarking
+- stale-telemetry and delayed-mitigation evaluation knobs
+- reduced-search oracle regret analysis
+- regime and ablation sweeps
 
 Core commands:
 
 ```bash
 python3 -m src.main --mode export_traces --steps 8 --seed 7
-python3 -m src.main --mode train_reranker --steps 8 --seed 7
+python3 -m src.main --mode train_reranker --steps 8 --seed 7 --model-type mlp --hidden-dim 12
 python3 -m src.main --mode benchmark_learned --steps 8 --seed 7
+python3 -m src.main --mode ablation_sweep --steps 8 --seed 7
+python3 -m src.main --mode oracle_regret --scenario mixed_failure --steps 8 --seed 7
 ```
 
 This matters because it moves the project closer to a real systems-paper pattern:
 
 - define an action space
 - generate offline traces
+- split train and eval regimes
 - learn a ranking model from counterfactual outcomes
 - compare learned and rule-based controllers by operating regime
+- quantify action quality against a reduced-search oracle

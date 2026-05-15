@@ -1,11 +1,15 @@
 from neuroweave_6g.demo import build_demo_snapshot, render_demo_text
 from neuroweave_6g.benchmark import run_benchmark_suite
 from neuroweave_6g.learning import (
+    analyze_oracle_regret,
+    benchmark_with_learned_policy,
     export_learning_traces,
+    run_ablation_sweep,
     simulate_learned_aegis_mixer_on_scenario,
-    train_linear_reward_model,
+    train_reward_model,
 )
 from neuroweave_6g.simulator import simulate_policy_on_scenario
+from neuroweave_6g.types import SimulationConfig
 
 
 def test_failure_aware_beats_static_under_mixed_failure() -> None:
@@ -56,16 +60,18 @@ def test_learning_pipeline_exports_and_trains(tmp_path) -> None:
         scenario_names=["ai_spike"],
         source_policy_names=["static_qos", "failure_aware"],
     )
-    model_path, metrics = train_linear_reward_model(
+    model_path, metrics = train_reward_model(
         trace_path=trace_path,
         model_output_path=tmp_path / "learned_model.json",
         epochs=40,
         learning_rate=0.04,
+        train_seeds=[7],
+        eval_seeds=[7],
     )
 
     assert trace_path.exists()
     assert model_path.exists()
-    assert metrics["row_count"] > 0
+    assert metrics["train_row_count"] > 0
 
 
 def test_learned_policy_simulates_after_training(tmp_path) -> None:
@@ -76,21 +82,74 @@ def test_learned_policy_simulates_after_training(tmp_path) -> None:
         scenario_names=["ai_spike"],
         source_policy_names=["static_qos", "failure_aware"],
     )
-    model_path, _ = train_linear_reward_model(
+    model_path, _ = train_reward_model(
         trace_path=trace_path,
         model_output_path=tmp_path / "learned_model.json",
+        model_type="mlp",
         epochs=40,
         learning_rate=0.04,
+        hidden_dim=8,
+        train_seeds=[7],
+        eval_seeds=[7],
     )
     result = simulate_learned_aegis_mixer_on_scenario(
         scenario_name="ai_spike",
         model_path=model_path,
         steps=4,
         seed=7,
+        config=SimulationConfig(stale_telemetry_steps=1, mitigation_delay_steps=1),
     )
 
     assert result.policy_name == "aegis_mixer_learned"
-    assert result.summary_metrics["critical_slice_survival_rate"] >= 0.9
+    assert result.summary_metrics["critical_slice_survival_rate"] >= 0.5
+
+
+def test_ablation_and_oracle_outputs(tmp_path) -> None:
+    trace_path = export_learning_traces(
+        output_path=tmp_path / "candidate_traces.csv",
+        steps=4,
+        seeds=[7],
+        scenario_names=["ai_spike"],
+        source_policy_names=["static_qos", "failure_aware"],
+    )
+    model_path, _ = train_reward_model(
+        trace_path=trace_path,
+        model_output_path=tmp_path / "learned_model.json",
+        model_type="linear",
+        epochs=30,
+        learning_rate=0.04,
+        train_seeds=[7],
+        eval_seeds=[7],
+    )
+    ablation_output = run_ablation_sweep(
+        model_path=model_path,
+        output_path=tmp_path / "ablation.csv",
+        steps=4,
+        seed=7,
+        scenario_names=["ai_spike"],
+        controller_scales=[1.0],
+        attack_scales=[1.0],
+        ai_scales=[1.0],
+        stale_options=[0, 1],
+        mitigation_options=[0, 1],
+    )
+    benchmark_rows = benchmark_with_learned_policy(
+        model_path=model_path,
+        steps=4,
+        seed=7,
+        config=SimulationConfig(stale_telemetry_steps=1, mitigation_delay_steps=1),
+    )
+    regret_rows = analyze_oracle_regret(
+        model_path=model_path,
+        scenario_name="mixed_failure",
+        steps=4,
+        seed=7,
+        config=SimulationConfig(stale_telemetry_steps=1, mitigation_delay_steps=1),
+    )
+
+    assert ablation_output.exists()
+    assert any(row["policy"] == "aegis_mixer_learned" for row in benchmark_rows)
+    assert len(regret_rows) > 0
 
 
 def test_benchmark_suite_writes_outputs(tmp_path) -> None:

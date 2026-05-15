@@ -121,3 +121,9 @@ class ScenarioResult:
     step_summaries: list[StepSummary]
     slice_observations: list[SliceObservation]
     summary_metrics: dict[str, float]
+
+
+@dataclass(slots=True)
+class SimulationConfig:
+    stale_telemetry_steps: int = 0
+    mitigation_delay_steps: int = 0

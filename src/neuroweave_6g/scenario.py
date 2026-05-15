@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import random
 
 from .types import CellDemand, Scenario, ScenarioStep, SliceDemand
@@ -21,6 +22,62 @@ def build_scenario(name: str, *, steps: int = 18, seed: int = 7) -> Scenario:
     if name not in builders:
         raise ValueError(f"Unknown scenario {name!r}. Available: {', '.join(list_scenarios())}")
     return builders[name](steps=steps, seed=seed)
+
+
+def scale_scenario(
+    scenario: Scenario,
+    *,
+    attack_scale: float = 1.0,
+    ai_scale: float = 1.0,
+    control_scale: float = 1.0,
+) -> Scenario:
+    scaled_steps: list[ScenarioStep] = []
+    for step in scenario.steps:
+        scaled_cells: list[CellDemand] = []
+        for cell in step.cells:
+            scaled_slices: list[SliceDemand] = []
+            scaled_control_events = int(cell.control_events * control_scale)
+            for slice_demand in cell.slices:
+                requested_prbs = slice_demand.requested_prbs
+                requested_gpu = slice_demand.requested_gpu
+                anomaly_score = slice_demand.anomaly_score
+                if slice_demand.kind in {"suspicious"}:
+                    requested_prbs *= attack_scale
+                    requested_gpu *= attack_scale
+                    anomaly_score = min(1.0, anomaly_score * (0.72 + 0.28 * attack_scale))
+                    scaled_control_events += int(18 * max(0.0, attack_scale - 1.0))
+                if slice_demand.kind in {"ai_edge", "mission_critical"}:
+                    requested_gpu *= ai_scale
+                    requested_prbs *= 0.92 + 0.08 * ai_scale
+                    scaled_control_events += int(6 * max(0.0, ai_scale - 1.0))
+                scaled_slices.append(
+                    replace(
+                        slice_demand,
+                        requested_prbs=requested_prbs,
+                        requested_gpu=requested_gpu,
+                        anomaly_score=anomaly_score,
+                    )
+                )
+            scaled_cells.append(
+                replace(
+                    cell,
+                    control_events=scaled_control_events,
+                    slices=scaled_slices,
+                )
+            )
+        scaled_steps.append(replace(step, cells=scaled_cells))
+    suffix = []
+    if attack_scale != 1.0:
+        suffix.append(f"attackx{attack_scale}")
+    if ai_scale != 1.0:
+        suffix.append(f"aix{ai_scale}")
+    if control_scale != 1.0:
+        suffix.append(f"ctrlx{control_scale}")
+    scaled_name = scenario.name if not suffix else f"{scenario.name}__{'__'.join(suffix)}"
+    scaled_notes = list(scenario.notes) + [
+        f"Scaled scenario with attack_scale={attack_scale}, ai_scale={ai_scale}, control_scale={control_scale}."
+    ]
+    return replace(scenario, name=scaled_name, steps=scaled_steps, notes=scaled_notes)
 
 
 def _rand(rng: random.Random, center: float, spread: float) -> float:
@@ -212,4 +269,3 @@ def _build_mixed_failure(*, steps: int, seed: int) -> Scenario:
             "Optional non-terrestrial and heterogeneous backhaul stress from the 6G space paper is approximated through sustained backhaul penalties.",
         ],
     )
-

@@ -3,10 +3,12 @@ from __future__ import annotations
 import math
 from statistics import mean
 from typing import Callable
+from collections import deque
+from dataclasses import replace
 
 from .policies import build_policy
 from .scenario import build_scenario
-from .types import CellDecision, CellDemand, ResourceBudget, ScenarioResult, SliceObservation, StepSummary
+from .types import CellDecision, CellDemand, ResourceBudget, ScenarioResult, SimulationConfig, SliceObservation, StepSummary
 
 DecisionBuilder = Callable[[CellDemand, ResourceBudget, int], CellDecision]
 
@@ -120,6 +122,7 @@ def simulate_policy_on_scenario(
         seed=seed,
         budget=budget,
         scenario=scenario,
+        config=SimulationConfig(),
     )
 
 
@@ -132,14 +135,18 @@ def simulate_decision_builder_on_scenario(
     seed: int = 7,
     budget: ResourceBudget | None = None,
     scenario=None,
+    config: SimulationConfig | None = None,
 ) -> ScenarioResult:
     effective_scenario = scenario or build_scenario(scenario_name, steps=steps, seed=seed)
     effective_budget = budget or ResourceBudget()
+    effective_config = config or SimulationConfig()
 
     controller_queue = 0
     step_summaries: list[StepSummary] = []
     slice_observations: list[SliceObservation] = []
     controller_latencies: list[float] = []
+    mitigation_queue = deque([0 for _ in range(effective_config.mitigation_delay_steps + 1)], maxlen=effective_config.mitigation_delay_steps + 1)
+    history_steps: list[list[CellDemand]] = []
 
     for step in effective_scenario.steps:
         total_incoming_events = sum(cell.control_events for cell in step.cells)
@@ -147,19 +154,31 @@ def simulate_decision_builder_on_scenario(
         controller_actions_spent = 0
         attack_leakage = 0
         suspicious_total = 0
-        mitigation_credit = 0
+        mitigation_credit = mitigation_queue.popleft() if effective_config.mitigation_delay_steps > 0 else 0
+        pending_mitigation_credit = 0
 
         per_cell_decisions = []
-        for cell in step.cells:
-            cell_decision = decision_builder(cell, effective_budget, controller_queue)
+        observed_cells = _build_observed_cells(
+            live_cells=step.cells,
+            history_steps=history_steps,
+            stale_telemetry_steps=effective_config.stale_telemetry_steps,
+        )
+        for live_cell, observed_cell in zip(step.cells, observed_cells):
+            cell_decision = decision_builder(observed_cell, effective_budget, controller_queue)
             controller_actions_spent += cell_decision.controller_actions_used
-            per_cell_decisions.append((cell, cell_decision))
-            for slice_demand in cell.slices:
+            per_cell_decisions.append((live_cell, cell_decision))
+            for slice_demand in live_cell.slices:
                 decision = cell_decision.slice_decisions[slice_demand.slice_id]
                 if slice_demand.suspicious and decision.isolated:
-                    mitigation_credit += 18
+                    pending_credit = 18
                 elif slice_demand.suspicious and decision.inspected:
-                    mitigation_credit += 8
+                    pending_credit = 8
+                else:
+                    pending_credit = 0
+                if effective_config.mitigation_delay_steps > 0:
+                    pending_mitigation_credit += pending_credit
+                else:
+                    mitigation_credit += pending_credit
 
         net_incoming_events = max(0, total_incoming_events - mitigation_credit)
         effective_controller_capacity = max(
@@ -206,6 +225,9 @@ def simulate_decision_builder_on_scenario(
                 overall_sla_rate=round(sum(1 for obs in cell_observations if obs.sla_met) / max(1, len(cell_observations)), 4),
             )
         )
+        if effective_config.mitigation_delay_steps > 0:
+            mitigation_queue.append(pending_mitigation_credit)
+        history_steps.append([replace(cell, slices=list(cell.slices)) for cell in step.cells])
 
     summary_metrics = summarize_observations(slice_observations)
     summary_metrics.update(
@@ -223,3 +245,31 @@ def simulate_decision_builder_on_scenario(
         slice_observations=slice_observations,
         summary_metrics=summary_metrics,
     )
+
+
+def _build_observed_cells(
+    *,
+    live_cells: list[CellDemand],
+    history_steps: list[list[CellDemand]],
+    stale_telemetry_steps: int,
+) -> list[CellDemand]:
+    if stale_telemetry_steps <= 0 or len(history_steps) < stale_telemetry_steps:
+        return live_cells
+    stale_cells = history_steps[-stale_telemetry_steps]
+    stale_map = {cell.cell_id: cell for cell in stale_cells}
+    observed_cells: list[CellDemand] = []
+    for live_cell in live_cells:
+        prior = stale_map.get(live_cell.cell_id)
+        if prior is None:
+            observed_cells.append(live_cell)
+            continue
+        observed_cells.append(
+            replace(
+                live_cell,
+                control_events=prior.control_events,
+                backhaul_pressure=prior.backhaul_pressure,
+                mobility_pressure=prior.mobility_pressure,
+                slices=list(prior.slices),
+            )
+        )
+    return observed_cells

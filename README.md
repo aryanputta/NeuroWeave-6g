@@ -8,8 +8,11 @@ The repo now also includes a research-oriented next step beyond hand-tuned heuri
 
 - rollout trace export for candidate actions
 - counterfactual reward labeling from simulator outcomes
-- a learned linear reranker for `aegis_mixer`
+- train/eval seed split for reranker evaluation
+- learned linear and MLP rerankers for `aegis_mixer`
 - learned-policy benchmarking against the fixed baselines
+- ablation sweeps over controller budget, attack pressure, AI pressure, stale telemetry, and mitigation delay
+- reduced-search oracle and regret analysis for per-cell action quality
 
 ## Why This Project Exists
 
@@ -138,7 +141,34 @@ What this buys you:
 - no longer just a hand-tuned scoring function
 - reproducible state-action-outcome traces
 - a real learning-based comparison against the fixed heuristics
-- a path toward ablations, regret analysis, and more paper-like results
+- train/eval split instead of same-seed evaluation
+- a path toward more paper-like ablations and regret analysis
+
+## Research Evaluation Workflow
+
+Train an MLP reranker with explicit train/eval seed split:
+
+```bash
+python3 -m src.main --mode train_reranker --steps 8 --seed 7 --model-type mlp --hidden-dim 12 --stale-telemetry-steps 1 --mitigation-delay-steps 1
+```
+
+Benchmark the learned controller under the same failure-mode knobs:
+
+```bash
+python3 -m src.main --mode benchmark_learned --steps 8 --seed 7 --model-path artifacts/learned_aegis_mixer.json --stale-telemetry-steps 1 --mitigation-delay-steps 1
+```
+
+Run regime sweeps:
+
+```bash
+python3 -m src.main --mode ablation_sweep --steps 8 --seed 7 --model-path artifacts/learned_aegis_mixer.json
+```
+
+Measure reduced-search oracle regret:
+
+```bash
+python3 -m src.main --mode oracle_regret --scenario mixed_failure --steps 8 --seed 7 --model-path artifacts/learned_aegis_mixer.json --stale-telemetry-steps 1 --mitigation-delay-steps 1
+```
 
 ## Recruiter Angle
 
